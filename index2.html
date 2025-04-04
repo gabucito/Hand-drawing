@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flower Petals Hand Tracking</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <style>
+        body {
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        .controls-panel {
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+        .controls-panel:hover {
+            background-color: rgba(0, 0, 0, 0.9);
+        }
+        canvas, video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #webglCanvas {
+            z-index: 2;
+            pointer-events: none;
+        }
+        #video {
+            z-index: 1;
+        }
+        #handCanvas {
+            z-index: 3;
+            pointer-events: none;
+        }
+        .toggle-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 24px;
+            transition: all 0.3s ease;
+        }
+        .toggle-controls:hover {
+            background-color: rgba(0, 0, 0, 0.9);
+            transform: scale(1.1);
+        }
+        label {
+            font-weight: bold;
+            color: white;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .slider-container label {
+            width: 140px;
+            margin-right: 10px;
+        }
+        .slider-container input {
+            flex-grow: 1;
+        }
+        .slider-container .value {
+            width: 50px;
+            text-align: right;
+            margin-left: 10px;
+            color: white;
+        }
+        .status-message {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            z-index: 1000;
+            transition: opacity 0.5s ease;
+        }
+        .color-theme {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            margin: 0 5px;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            border: 2px solid transparent;
+        }
+        .color-theme:hover {
+            transform: scale(1.1);
+        }
+        .color-theme.active {
+            border: 2px solid white;
+            transform: scale(1.1);
+        }
+        .start-btn {
+            background: linear-gradient(45deg, #ff4b81, #ff8a00);
+            border: none;
+            border-radius: 25px;
+            padding: 12px 30px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 75, 129, 0.5);
+            transition: all 0.3s ease;
+        }
+        .start-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 75, 129, 0.6);
+        }
+        .start-btn:active {
+            transform: translateY(1px);
+        }
+    </style>
+</head>
+<body class="bg-gray-900">
+    <div id="loading" class="fixed inset-0 flex items-center justify-center bg-black z-50">
+        <div class="text-center">
+            <div class="spinner-border text-light mb-3" role="status">
+                <div class="w-16 h-16 border-4 border-dashed rounded-full border-white animate-spin"></div>
+            </div>
+            <h2 class="text-xl text-white">Loading resources...</h2>
+            <p class="text-white opacity-75">Please wait while we set up the magical experience</p>
+        </div>
+    </div>
+
+    <video id="video" playsinline webkit-playsinline></video>
+    <canvas id="handCanvas"></canvas>
+    <canvas id="webglCanvas"></canvas>
+    
+    <div id="statusMessage" class="status-message opacity-0">Ready to start</div>
+    
+    <div id="startContainer" class="fixed inset-0 flex items-center justify-center z-10">
+        <button id="startButton" class="start-btn text-xl">
+            Start the Magic
+        </button>
+    </div>
+
+    <button id="toggleControls" class="toggle-controls">⚙️</button>
+
+    <div id="controlsPanel" class="controls-panel fixed bottom-4 right-4 p-4 z-20 w-80 max-h-[calc(100vh-2rem)] overflow-y-auto" style="display: none;">
+        <h3 class="text-white text-lg font-bold mb-4">Effect Controls</h3>
+        
+        <div class="slider-container">
+            <label for="videoOpacity">Video Opacity</label>
+            <input type="range" id="videoOpacity" min="0" max="1" step="0.01" value="0.8">
+            <span class="value" id="videoOpacityValue">0.8</span>
+        </div>
+        
+        <div class="slider-container">
+            <label for="petalSize">Petal Size</label>
+            <input type="range" id="petalSize" min="0.2" max="3" step="0.1" value="1">
+            <span class="value" id="petalSizeValue">1</span>
+        </div>
+        
+        <div class="slider-container">
+            <label for="emissionRate">Emission Rate</label>
+            <input type="range" id="emissionRate" min="1" max="30" step="1" value="10">
+            <span class="value" id="emissionRateValue">10</span>
+        </div>
+        
+        <div class="slider-container">
+            <label for="petalLifetime">Petal Lifetime</label>
+            <input type="range" id="petalLifetime" min="0.5" max="5" step="0.1" value="2">
+            <span class="value" id="petalLifetimeValue">2s</span>
+        </div>
+        
+        <div class="slider-container">
+            <label for="rotationSpeed">Rotation Speed</label>
+            <input type="range" id="rotationSpeed" min="0" max="10" step="0.1" value="3">
+            <span class="value" id="rotationSpeedValue">3</span>
+        </div>
+        
+        <div class="slider-container">
+            <label for="driftAmount">Drift Amount</label>
+            <input type="range" id="driftAmount" min="0" max="5" step="0.1" value="1">
+            <span class="value" id="driftAmountValue">1</span>
+        </div>
+        
+        <div class="mt-4">
+            <label class="block mb-2 text-white">Petal Color Theme</label>
+            <div class="flex flex-wrap">
+                <div class="color-theme active" style="background: linear-gradient(45deg, #ff4b81, #ff8a00);" data-colors='["#ff4b81", "#ff8a00", "#ffdd22", "#ff6e42"]'></div>
+                <div class="color-theme" style="background: linear-gradient(45deg, #a139fa, #fd62e9);" data-colors='["#a139fa", "#fd62e9", "#ff99cc", "#c238eb"]'></div>
+                <div class="color-theme" style="background: linear-gradient(45deg, #0ba360, #3cba92);" data-colors='["#0ba360", "#3cba92", "#57d75f", "#2afeb7"]'></div>
+                <div class="color-theme" style="background: linear-gradient(45deg, #4facfe, #00f2fe);" data-colors='["#4facfe", "#00f2fe", "#96e6ff", "#73d2f6"]'></div>
+                <div class="color-theme" style="background: linear-gradient(45deg, #f857a6, #ff5858);" data-colors='["#f857a6", "#ff5858", "#ff9d87", "#ffbd80"]'></div>
+                <div class="color-theme" style="background: linear-gradient(45deg, #fff, #fffaaa);" data-colors='["#ffffff", "#fffaaa", "#fffddd", "#fffbf0"]'></div>
+            </div>
+        </div>
+        
+        <div class="mt-4">
+            <label class="block mb-2 text-white">Petal Type</label>
+            <select id="petalType" class="w-full p-2 rounded bg-gray-800 text-white">
+                <option value="round">Round</option>
+                <option value="sakura" selected>Sakura</option>
+                <option value="heart">Heart</option>
+                <option value="leaf">Leaf</option>
+                <option value="star">Star</option>
+            </select>
+        </div>
+    </div>
+
+    <script>
+        // Wait for the DOM to load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Show loading screen
+            const loadingScreen = document.getElementById('loading');
+            const startContainer = document.getElementById('startContainer');
+            const startButton = document.getElementById('startButton');
+            const statusMessage = document.getElementById('statusMessage');
+            const toggleControls = document.getElementById('toggleControls');
+            const controlsPanel = document.getElementById('controlsPanel');
+            const videoEl = document.getElementById('video');
+            const handCanvas = document.getElementById('handCanvas');
+            const webglCanvas = document.getElementById('webglCanvas');
+            
+            // Controls
+            const videoOpacitySlider = document.getElementById('videoOpacity');
+            const petalSizeSlider = document.getElementById('petalSize');
+            const emissionRateSlider = document.getElementById('emissionRate');
+            const petalLifetimeSlider = document.getElementById('petalLifetime');
+            const rotationSpeedSlider = document.getElementById('rotationSpeed');
+            const driftAmountSlider = document.getElementById('driftAmount');
+            const petalTypeSelect = document.getElementById('petalType');
+            const colorThemes = document.querySelectorAll('.color-theme');
+            
+            // Values display
+            const videoOpacityValue = document.getElementById('videoOpacityValue');
+            const petalSizeValue = document.getElementById('petalSizeValue');
+            const emissionRateValue = document.getElementById('emissionRateValue');
+            const petalLifetimeValue = document.getElementById('petalLifetimeValue');
+            const rotationSpeedValue = document.getElementById('rotationSpeedValue');
+            const driftAmountValue = document.getElementById('driftAmountValue');
+            
+            // Settings
+            let settings = {
+                videoOpacity: 0.8,
+                petalSize: 1.0,
+                emissionRate: 10,
+                petalLifetime: 2.0,
+                rotationSpeed: 3.0,
+                driftAmount: 1.0,
+                petalType: 'sakura',
+                colors: ["#ff4b81", "#ff8a00", "#ffdd22", "#ff6e42"],
+            };
+            
+            // MediaPipe variables
+            let camera = null;
+            let hands = null;
+            const handCtx = handCanvas.getContext('2d');
+            
+            // WebGL variables
+            let gl = null;
+            let program = null;
+            let particleSystem = null;
+            let lastFrameTime = 0;
+            let isRunning = false;
+            
+            // Hand tracking variables
+            let indexFingerPosition = { x: 0, y: 0 };
+            let lastIndexFingerPosition = { x: 0, y: 0 };
+            let handVisible = false;
+            
+            // Initialize the UI
+            function initUI() {
+                // Set initial slider values
+                videoOpacitySlider.value = settings.videoOpacity;
+                petalSizeSlider.value = settings.petalSize;
+                emissionRateSlider.value = settings.emissionRate;
+                petalLifetimeSlider.value = settings.petalLifetime;
+                rotationSpeedSlider.value = settings.rotationSpeed;
+                driftAmountSlider.value = settings.driftAmount;
+                petalTypeSelect.value = settings.petalType;
+                
+                // Update displays
+                videoOpacityValue.textContent = settings.videoOpacity;
+                petalSizeValue.textContent = settings.petalSize;
+                emissionRateValue.textContent = settings.emissionRate;
+                petalLifetimeValue.textContent = settings.petalLifetime + 's';
+                rotationSpeedValue.textContent = settings.rotationSpeed;
+                driftAmountValue.textContent = settings.driftAmount;
+                
+                // Toggle controls panel
+                toggleControls.addEventListener('click', () => {
+                    if (controlsPanel.style.display === 'none') {
+                        controlsPanel.style.display = 'block';
+                    } else {
+                        controlsPanel.style.display = 'none';
+                    }
+                });
+                
+                // Video opacity
+                videoOpacitySlider.addEventListener('input', (e) => {
+                    settings.videoOpacity = parseFloat(e.target.value);
+                    videoOpacityValue.textContent = settings.videoOpacity;
+                    videoEl.style.opacity = settings.videoOpacity;
+                });
+                
+                // Petal size
+                petalSizeSlider.addEventListener('input', (e) => {
+                    settings.petalSize = parseFloat(e.target.value);
+                    petalSizeValue.textContent = settings.petalSize;
+                });
+                
+                // Emission rate
+                emissionRateSlider.addEventListener('input', (e) => {
+                    settings.emissionRate = parseInt(e.target.value);
+                    emissionRateValue.textContent = settings.emissionRate;
+                });
+                
+                // Petal lifetime
+                petalLifetimeSlider.addEventListener('input', (e) => {
+                    settings.petalLifetime = parseFloat(e.target.value);
+                    petalLifetimeValue.textContent = settings.petalLifetime + 's';
+                });
+                
+                // Rotation speed
+                rotationSpeedSlider.addEventListener('input', (e) => {
+                    settings.rotationSpeed = parseFloat(e.target.value);
+                    rotationSpeedValue.textContent = settings.rotationSpeed;
+                });
+                
+                // Drift amount
+                driftAmountSlider.addEventListener('input', (e) => {
+                    settings.driftAmount = parseFloat(e.target.value);
+                    driftAmountValue.textContent = settings.driftAmount;
+                });
+                
+                // Petal type
+                petalTypeSelect.addEventListener('change', (e) => {
+                    settings.petalType = e.target.value;
+                    updatePetalTexture();
+                });
+                
+                // Color themes
+                colorThemes.forEach(theme => {
+                    theme.addEventListener('click', () => {
+                        // Remove active class from all themes
+                        colorThemes.forEach(t => t.classList.remove('active'));
+                        // Add active class to clicked theme
+                        theme.classList.add('active');
+                        // Update colors
+                        settings.colors = JSON.parse(theme.dataset.colors);
+                    });
+                });
+                
+                // Start button
+                startButton.addEventListener('click', startApp);
+            }
+            
+            // Initialize MediaPipe Hands
+            function initMediaPipe() {
+                return new Promise((resolve) => {
+                    hands = new Hands({
+                        locateFile: (file) => {
+                            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                        }
+                    });
+                    
+                    hands.setOptions({
+                        maxNumHands: 1,
+                        modelComplexity: 1,
+                        minDetectionConfidence: 0.5,
+                        minTrackingConfidence: 0.5
+                    });
+                    
+                    hands.onResults(onHandResults);
+                    
+                    camera = new Camera(videoEl, {
+                        onFrame: async () => {
+                            await hands.send({image: videoEl});
+                        },
+                        width: 1280,
+                        height: 720
+                    });
+                    
+                    resolve();
+                });
+            }
+            
+            // Handle hand tracking results
+            function onHandResults(results) {
+                // Clear the hand canvas
+                handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+                
+                // Check if we have any hands detected
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    // Get the first hand
+                    const hand = results.multiHandLandmarks[0];
+                    
+                    // Draw the hand landmarks
+                    drawConnectors(handCtx, hand, HAND_CONNECTIONS, {
+                        color: 'rgba(255, 255, 255, 0.5)',
+                        lineWidth: 2
+                    });
+                    drawLandmarks(handCtx, hand, {
+                        color: 'rgba(255, 255, 255, 0.8)',
+                        lineWidth: 1,
+                        radius: 3
+                    });
+                    
+                    // Get the index finger tip position (landmark 8)
+                    const indexFinger = hand[8];
+                    
+                    // Update the index finger position
+                    lastIndexFingerPosition = {...indexFingerPosition};
+                    indexFingerPosition = {
+                        x: indexFinger.x * handCanvas.width,
+                        y: indexFinger.y * handCanvas.height
+                    };
+                    
+                    handVisible = true;
+                } else {
+                    handVisible = false;
+                }
+            }
+            
+            // Initialize WebGL2
+            function initWebGL() {
+                return new Promise((resolve, reject) => {
+                    try {
+                        // Get WebGL2 context
+                        gl = webglCanvas.getContext('webgl2', { premultipliedAlpha: false, alpha: true });
+                        
+                        if (!gl) {
+                            throw new Error('WebGL2 is not supported on your browser.');
+                        }
+                        
+                        // Enable required WebGL features
+                        gl.enable(gl.BLEND);
+                        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                        
+                        // Create shader program
+                        program = createShaderProgram();
+                        
+                        // Create textures for petals
+                        updatePetalTexture();
+                        
+                        // Initialize particle system
+                        particleSystem = createParticleSystem();
+                        
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            }
+            
+            // Create shader program
+            function createShaderProgram() {
+                // Vertex shader source
+                const vsSource = `#version 300 es
+                precision mediump float;
+                
+                in vec2 aPosition;
+                in vec2 aTexCoord;
+                in vec2 aCenter;
+                in float aSize;
+                in float aRotation;
+                in float aAge;
+                in float aLifetime;
+                in vec4 aColor;
+                
+                out vec2 vTexCoord;
+                out float vAlpha;
+                out vec4 vColor;
+                
+                uniform vec2 uResolution;
+                
+                void main() {
+                    // Calculate alpha based on age
+                    float lifeProgress = aAge / aLifetime;
+                    vAlpha = 1.0 - lifeProgress;
+                    
+                    // Fade in for the first 0.1 of lifetime
+                    if (lifeProgress < 0.1) {
+                        vAlpha *= lifeProgress / 0.1;
+                    }
+                    
+                    // Pass color to fragment shader
+                    vColor = aColor;
+                    
+                    // Calculate rotation
+                    float s = sin(aRotation);
+                    float c = cos(aRotation);
+                    
+                    // Apply rotation and size to position
+                    vec2 rotatedPos = vec2(
+                        aPosition.x * c - aPosition.y * s,
+                        aPosition.x * s + aPosition.y * c
+                    ) * aSize;
+                    
+                    // Add to center position
+                    vec2 finalPosition = aCenter + rotatedPos;
+                    
+                    // Convert to clip space
+                    vec2 position = 2.0 * finalPosition / uResolution - 1.0;
+                    position.y = -position.y;
+                    
+                    // Output position
+                    gl_Position = vec4(position, 0.0, 1.0);
+                    
+                    // Pass texture coordinates
+                    vTexCoord = aTexCoord;
+                }`;
+                
+                // Fragment shader source
+                const fsSource = `#version 300 es
+                precision mediump float;
+                
+                in vec2 vTexCoord;
+                in float vAlpha;
+                in vec4 vColor;
+                
+                out vec4 fragColor;
+                
+                uniform sampler2D uTexture;
+                
+                void main() {
+                    vec4 texColor = texture(uTexture, vTexCoord);
+                    fragColor = vec4(vColor.rgb, texColor.a * vAlpha * vColor.a);
+                }`;
+                
+                // Create and compile shaders
+                const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+                gl.shaderSource(vertexShader, vsSource);
+                gl.compileShader(vertexShader);
+                
+                if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+                    const errorMsg = gl.getShaderInfoLog(vertexShader);
+                    gl.deleteShader(vertexShader);
+                    throw new Error(`Vertex shader compilation failed: ${errorMsg}`);
+                }
+                
+                const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+                gl.shaderSource(fragmentShader, fsSource);
+                gl.compileShader(fragmentShader);
+                
+                if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+                    const errorMsg = gl.getShaderInfoLog(fragmentShader);
+                    gl.deleteShader(fragmentShader);
+                    throw new Error(`Fragment shader compilation failed: ${errorMsg}`);
+                }
+                
+                // Create program and link shaders
+                const program = gl.createProgram();
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+                gl.linkProgram(program);
+                
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    const errorMsg = gl.getProgramInfoLog(program);
+                    gl.deleteProgram(program);
+                    throw new Error(`Shader program linking failed: ${errorMsg}`);
+                }
+                
+                // Get attribute locations
+                program.attributeLocations = {
+                    position: gl.getAttribLocation(program, 'aPosition'),
+                    texCoord: gl.getAttribLocation(program, 'aTexCoord'),
+                    center: gl.getAttribLocation(program, 'aCenter'),
+                    size: gl.getAttribLocation(program, 'aSize'),
+                    rotation: gl.getAttribLocation(program, 'aRotation'),
+                    age: gl.getAttribLocation(program, 'aAge'),
+                    lifetime: gl.getAttribLocation(program, 'aLifetime'),
+                    color: gl.getAttribLocation(program, 'aColor')
+                };
+                
+                // Get uniform locations
+                program.uniformLocations = {
+                    resolution: gl.getUniformLocation(program, 'uResolution'),
+                    texture: gl.getUniformLocation(program, 'uTexture')
+                };
+                
+                return program;
+            }
+            
+            // Create and draw petal textures
+            function updatePetalTexture() {
+                if (!gl) return;
+                
+                // Create a 2D canvas to draw petal texture
+                const canvas = document.createElement('canvas');
+                canvas.width = 128;
+                canvas.height = 128;
+                const ctx = canvas.getContext('2d');
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const size = canvas.width * 0.4;
+                
+                // Draw different petal shapes based on selected type
+                switch(settings.petalType) {
+                    case 'sakura':
+                        // Draw a sakura petal
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        
+                        // Draw a 5-petal shape
+                        for (let i = 0; i < 5; i++) {
+                            const angle = (i * Math.PI * 2) / 5;
+                            const x1 = centerX + Math.cos(angle) * size;
+                            const y1 = centerY + Math.sin(angle) * size;
+                            
+                            const ctrlAngle1 = angle + Math.PI * 0.3 / 5;
+                            const ctrlAngle2 = angle - Math.PI * 0.3 / 5;
+                            
+                            const ctrlDist = size * 0.8;
+                            
+                            const cx1 = centerX + Math.cos(ctrlAngle1) * ctrlDist;
+                            const cy1 = centerY + Math.sin(ctrlAngle1) * ctrlDist;
+                            
+                            const cx2 = centerX + Math.cos(ctrlAngle2) * ctrlDist;
+                            const cy2 = centerY + Math.sin(ctrlAngle2) * ctrlDist;
+                            
+                            if (i === 0) {
+                                ctx.moveTo(x1, y1);
+                            } else {
+                                ctx.bezierCurveTo(cx2, cy2, cx1, cy1, x1, y1);
+                            }
+                        }
+                        
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        // Add detail to the center
+                        ctx.beginPath();
+                        ctx.arc(centerX, centerY, size * 0.2, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                        ctx.fill();
+                        break;
+                        
+                    case 'heart':
+                        // Draw a heart shape
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.moveTo(centerX, centerY + size * 0.7);
+                        ctx.bezierCurveTo(
+                            centerX - size, centerY + size * 0.25,
+                            centerX - size, centerY - size * 0.5,
+                            centerX, centerY - size * 0.3
+                        );
+                        ctx.bezierCurveTo(
+                            centerX + size, centerY - size * 0.5,
+                            centerX + size, centerY + size * 0.25,
+                            centerX, centerY + size * 0.7
+                        );
+                        ctx.fill();
+                        break;
+                        
+                    case 'leaf':
+                        // Draw a leaf shape
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.moveTo(centerX, centerY - size);
+                        
+                        // Right side of leaf
+                        ctx.bezierCurveTo(
+                            centerX + size * 0.8, centerY - size * 0.7,
+                            centerX + size * 0.8, centerY + size * 0.4,
+                            centerX, centerY + size
+                        );
+                        
+                        // Left side of leaf
+                        ctx.bezierCurveTo(
+                            centerX - size * 0.8, centerY + size * 0.4,
+                            centerX - size * 0.8, centerY - size * 0.7,
+                            centerX, centerY - size
+                        );
+                        
+                        ctx.fill();
+                        
+                        // Add veins
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(centerX, centerY - size);
+                        ctx.lineTo(centerX, centerY + size);
+                        ctx.stroke();
+                        
+                        // Side veins
+                        for (let i = 1; i <= 4; i++) {
+                            const y = centerY - size + i * size * 0.4;
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(centerX, y);
+                            ctx.lineTo(centerX + size * 0.6, y + size * 0.1);
+                            ctx.stroke();
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(centerX, y);
+                            ctx.lineTo(centerX - size * 0.6, y + size * 0.1);
+                            ctx.stroke();
+                        }
+                        break;
+                        
+                    case 'star':
+                        // Draw a star
+                        ctx.fillStyle = '#ffffff';
+                        const spikes = 5;
+                        const outerRadius = size;
+                        const innerRadius = size * 0.4;
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(centerX + outerRadius, centerY);
+                        
+                        for (let i = 0; i < spikes * 2; i++) {
+                            const radius = i % 2 === 0 ? innerRadius : outerRadius;
+                            const angle = (i * Math.PI) / spikes;
+                            const x = centerX + radius * Math.cos(angle);
+                            const y = centerY + radius * Math.sin(angle);
+                            
+                            ctx.lineTo(x, y);
+                        }
+                        
+                        ctx.closePath();
+                        ctx.fill();
+                        break;
+                        
+                    case 'round':
+                    default:
+                        // Draw a simple round petal
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.ellipse(centerX, centerY, size, size * 0.7, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                }
+                
+                // Create texture from canvas
+                const texture = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                
+                // Store the texture
+                if (particleSystem && particleSystem.texture) {
+                    gl.deleteTexture(particleSystem.texture);
+                }
+                
+                if (particleSystem) {
+                    particleSystem.texture = texture;
+                }
+            }
+            
+            // Create particle system
+            function createParticleSystem() {
+                const MAX_PARTICLES = 1000;
+                
+                // Vertices for a quad (2 triangles)
+                const positions = new Float32Array([
+                    -0.5, -0.5,
+                    0.5, -0.5,
+                    0.5, 0.5,
+                    -0.5, -0.5,
+                    0.5, 0.5,
+                    -0.5, 0.5
+                ]);
+                
+                // Texture coordinates
+                const texCoords = new Float32Array([
+                    0.0, 1.0,
+                    1.0, 1.0,
+                    1.0, 0.0,
+                    0.0, 1.0,
+                    1.0, 0.0,
+                    0.0, 0.0
+                ]);
+                
+                // Create buffers
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+                
+                const texCoordBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+                
+                // Create instance data buffers
+                const centerBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, centerBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 2 * 4, gl.DYNAMIC_DRAW);
+                
+                const sizeBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 4, gl.DYNAMIC_DRAW);
+                
+                const rotationBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, rotationBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 4, gl.DYNAMIC_DRAW);
+                
+                const ageBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, ageBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 4, gl.DYNAMIC_DRAW);
+                
+                const lifetimeBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, lifetimeBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 4, gl.DYNAMIC_DRAW);
+                
+                const colorBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, MAX_PARTICLES * 4 * 4, gl.DYNAMIC_DRAW);
+                
+                // Create vertex array object
+                const vao = gl.createVertexArray();
+                gl.bindVertexArray(vao);
+                
+                // Set up attribute pointers
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.position);
+                gl.vertexAttribPointer(program.attributeLocations.position, 2, gl.FLOAT, false, 0, 0);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.texCoord);
+                gl.vertexAttribPointer(program.attributeLocations.texCoord, 2, gl.FLOAT, false, 0, 0);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, centerBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.center);
+                gl.vertexAttribPointer(program.attributeLocations.center, 2, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribDivisor(program.attributeLocations.center, 1);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, sizeBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.size);
+                gl.vertexAttribPointer(program.attributeLocations.size, 1, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribDivisor(program.attributeLocations.size, 1);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, rotationBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.rotation);
+                gl.vertexAttribPointer(program.attributeLocations.rotation, 1, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribDivisor(program.attributeLocations.rotation, 1);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, ageBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.age);
+                gl.vertexAttribPointer(program.attributeLocations.age, 1, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribDivisor(program.attributeLocations.age, 1);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, lifetimeBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.lifetime);
+                gl.vertexAttribPointer(program.attributeLocations.lifetime, 1, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribDivisor(program.attributeLocations.lifetime, 1);
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+                gl.enableVertexAttribArray(program.attributeLocations.color);
+                gl.vertexAttribPointer(program.attributeLocations.color, 4, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribDivisor(program.attributeLocations.color, 1);
+                
+                // Unbind VAO
+                gl.bindVertexArray(null);
+                
+                // Particle system data
+                return {
+                    maxParticles: MAX_PARTICLES,
+                    particleCount: 0,
+                    positionBuffer,
+                    texCoordBuffer,
+                    centerBuffer,
+                    sizeBuffer,
+                    rotationBuffer,
+                    ageBuffer,
+                    lifetimeBuffer,
+                    colorBuffer,
+                    vao,
+                    texture: null,
+                    particles: Array(MAX_PARTICLES).fill().map(() => ({
+                        center: { x: 0, y: 0 },
+                        velocity: { x: 0, y: 0 },
+                        size: 0,
+                        rotation: 0,
+                        rotationSpeed: 0,
+                        age: 0,
+                        lifetime: 0,
+                        color: { r: 0, g: 0, b: 0, a: 0 },
+                        active: false
+                    }))
+                };
+            }
+            
+            // Emit particles
+            function emitParticles() {
+                if (!handVisible) return;
+                
+                // Calculate movement speed
+                const dx = indexFingerPosition.x - lastIndexFingerPosition.x;
+                const dy = indexFingerPosition.y - lastIndexFingerPosition.y;
+                const movementSpeed = Math.sqrt(dx * dx + dy * dy);
+                
+                // Adjust emission rate based on movement speed
+                const speedFactor = Math.min(1, movementSpeed / 30);
+                const adjustedEmissionRate = Math.max(1, Math.floor(settings.emissionRate * speedFactor));
+                
+                // Emit particles
+                for (let i = 0; i < adjustedEmissionRate; i++) {
+                    // Find an inactive particle
+                    let particleIndex = -1;
+                    for (let j = 0; j < particleSystem.maxParticles; j++) {
+                        if (!particleSystem.particles[j].active) {
+                            particleIndex = j;
+                            break;
+                        }
+                    }
+                    
+                    // If no inactive particles found, skip
+                    if (particleIndex === -1) continue;
+                    
+                    // Get random color from color palette
+                    const colorIndex = Math.floor(Math.random() * settings.colors.length);
+                    const color = hexToRgb(settings.colors[colorIndex]);
+                    
+                    // Randomize position slightly around finger
+                    const spread = 10 * settings.petalSize;
+                    const randomX = (Math.random() - 0.5) * spread;
+                    const randomY = (Math.random() - 0.5) * spread;
+                    
+                    // Set particle properties
+                    const particle = particleSystem.particles[particleIndex];
+                    particle.center = {
+                        x: indexFingerPosition.x + randomX,
+                        y: indexFingerPosition.y + randomY
+                    };
+                    
+                    // Set velocity based on hand movement and random drift
+                    const driftFactor = settings.driftAmount;
+                    particle.velocity = {
+                        x: dx * 0.1 + (Math.random() - 0.5) * driftFactor,
+                        y: dy * 0.1 + (Math.random() - 0.5) * driftFactor - 0.5 // Slight upward drift
+                    };
+                    
+                    // Size variations
+                    const sizeFactor = 0.7 + Math.random() * 0.6;
+                    particle.size = 30 * settings.petalSize * sizeFactor;
+                    
+                    // Rotation
+                    particle.rotation = Math.random() * Math.PI * 2;
+                    particle.rotationSpeed = (Math.random() - 0.5) * settings.rotationSpeed;
+                    
+                    // Lifespan
+                    particle.age = 0;
+                    particle.lifetime = settings.petalLifetime * (0.8 + Math.random() * 0.4);
+                    
+                    // Color with slight variations
+                    const saturationVariation = 0.9 + Math.random() * 0.2;
+                    const lightnessVariation = 0.9 + Math.random() * 0.2;
+                    particle.color = {
+                        r: color.r / 255 * saturationVariation,
+                        g: color.g / 255 * saturationVariation,
+                        b: color.b / 255 * saturationVariation,
+                        a: 0.9 + Math.random() * 0.1
+                    };
+                    
+                    particle.active = true;
+                }
+                
+                particleSystem.particleCount = particleSystem.particles.filter(p => p.active).length;
+            }
+            
+            // Update particles
+            function updateParticles(deltaTime) {
+                const centers = new Float32Array(particleSystem.maxParticles * 2);
+                const sizes = new Float32Array(particleSystem.maxParticles);
+                const rotations = new Float32Array(particleSystem.maxParticles);
+                const ages = new Float32Array(particleSystem.maxParticles);
+                const lifetimes = new Float32Array(particleSystem.maxParticles);
+                const colors = new Float32Array(particleSystem.maxParticles * 4);
+                
+                let activeCount = 0;
+                
+                for (let i = 0; i < particleSystem.maxParticles; i++) {
+                    const particle = particleSystem.particles[i];
+                    
+                    if (!particle.active) continue;
+                    
+                    // Update age
+                    particle.age += deltaTime;
+                    if (particle.age >= particle.lifetime) {
+                        particle.active = false;
+                        continue;
+                    }
+                    
+                    // Update position based on velocity
+                    particle.center.x += particle.velocity.x;
+                    particle.center.y += particle.velocity.y;
+                    
+                    // Add some oscillation to X position
+                    const agePercent = particle.age / particle.lifetime;
+                    const oscAmp = 0.5 * settings.driftAmount;
+                    particle.center.x += Math.sin(agePercent * Math.PI * 4) * oscAmp;
+                    
+                    // Slow down velocity over time
+                    particle.velocity.x *= 0.99;
+                    particle.velocity.y *= 0.99;
+                    
+                    // Add gravity effect
+                    particle.velocity.y += 0.01 * settings.driftAmount;
+                    
+                    // Update rotation
+                    particle.rotation += particle.rotationSpeed * deltaTime;
+                    
+                    // Update buffers
+                    const bufferIndex = activeCount;
+                    centers[bufferIndex * 2] = particle.center.x;
+                    centers[bufferIndex * 2 + 1] = particle.center.y;
+                    sizes[bufferIndex] = particle.size;
+                    rotations[bufferIndex] = particle.rotation;
+                    ages[bufferIndex] = particle.age;
+                    lifetimes[bufferIndex] = particle.lifetime;
+                    colors[bufferIndex * 4] = particle.color.r;
+                    colors[bufferIndex * 4 + 1] = particle.color.g;
+                    colors[bufferIndex * 4 + 2] = particle.color.b;
+                    colors[bufferIndex * 4 + 3] = particle.color.a;
+                    
+                    activeCount++;
+                }
+                
+                // Update instance buffers
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSystem.centerBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, centers.subarray(0, activeCount * 2));
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSystem.sizeBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, sizes.subarray(0, activeCount));
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSystem.rotationBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, rotations.subarray(0, activeCount));
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSystem.ageBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, ages.subarray(0, activeCount));
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSystem.lifetimeBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, lifetimes.subarray(0, activeCount));
+                
+                gl.bindBuffer(gl.ARRAY_BUFFER, particleSystem.colorBuffer);
+                gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors.subarray(0, activeCount * 4));
+                
+                particleSystem.particleCount = activeCount;
+            }
+            
+            // Render the scene
+            function render() {
+                if (!isRunning) return;
+                
+                // Calculate delta time
+                const now = performance.now();
+                const deltaTime = (now - lastFrameTime) / 1000; // Convert to seconds
+                lastFrameTime = now;
+                
+                // Resize canvases if needed
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                
+                if (webglCanvas.width !== width || webglCanvas.height !== height) {
+                    webglCanvas.width = width;
+                    webglCanvas.height = height;
+                    gl.viewport(0, 0, width, height);
+                }
+                
+                if (handCanvas.width !== width || handCanvas.height !== height) {
+                    handCanvas.width = width;
+                    handCanvas.height = height;
+                }
+                
+                // Emit particles
+                emitParticles();
+                
+                // Update particles
+                updateParticles(deltaTime);
+                
+                // Clear the canvas
+                gl.clearColor(0, 0, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                
+                // Draw particles
+                if (particleSystem.particleCount > 0) {
+                    gl.useProgram(program);
+                    
+                    // Set uniforms
+                    gl.uniform2f(program.uniformLocations.resolution, width, height);
+                    gl.uniform1i(program.uniformLocations.texture, 0);
+                    
+                    // Bind texture
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, particleSystem.texture);
+                    
+                    // Bind VAO and draw
+                    gl.bindVertexArray(particleSystem.vao);
+                    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, particleSystem.particleCount);
+                    gl.bindVertexArray(null);
+                }
+                
+                requestAnimationFrame(render);
+            }
+            
+            // Convert hex color to RGB
+            function hexToRgb(hex) {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                } : { r: 255, g: 255, b: 255 };
+            }
+            
+            // Show status message
+            function showStatus(message, duration = 3000) {
+                statusMessage.textContent = message;
+                statusMessage.style.opacity = '1';
+                
+                setTimeout(() => {
+                    statusMessage.style.opacity = '0';
+                }, duration);
+            }
+            
+            // Resize handler
+            function handleResize() {
+                if (!gl) return;
+                
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                
+                webglCanvas.width = width;
+                webglCanvas.height = height;
+                gl.viewport(0, 0, width, height);
+                
+                handCanvas.width = width;
+                handCanvas.height = height;
+            }
+            
+            // Start the application
+            async function startApp() {
+                try {
+                    // Hide start button
+                    startContainer.style.display = 'none';
+                    
+                    // Show status
+                    showStatus('Starting camera...');
+                    
+                    // Init MediaPipe
+                    await initMediaPipe();
+                    
+                    // Start camera
+                    await camera.start();
+                    
+                    // Set video opacity
+                    videoEl.style.opacity = settings.videoOpacity;
+                    
+                    // Initialize WebGL
+                    await initWebGL();
+                    
+                    // Show controls
+                    controlsPanel.style.display = 'block';
+                    
+                    // Start rendering
+                    isRunning = true;
+                    lastFrameTime = performance.now();
+                    requestAnimationFrame(render);
+                    
+                    // Show status
+                    showStatus('Camera started successfully. Move your hand to create petals!');
+                    
+                    // Handle window resize
+                    window.addEventListener('resize', handleResize);
+                } catch (error) {
+                    console.error('Error starting app:', error);
+                    showStatus(`Error: ${error.message}`, 10000);
+                }
+            }
+            
+            // Initialize UI when page loads
+            initUI();
+            
+            // Hide loading screen when everything is loaded
+            loadingScreen.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
